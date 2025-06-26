@@ -1,0 +1,468 @@
+-- WindUI 完整实现
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
+
+local player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+
+-- ================ 基础组件系统 ================
+local WindUI = {}
+
+-- 组件基类
+function WindUI.CreateComponent(componentType)
+    local Component = {}
+    Component.__index = Component
+
+    function Component.new(instance)
+        return setmetatable({
+            _instance = instance,
+            _components = {}
+        }, Component)
+    end
+
+    function Component:Destroy()
+        if self._instance then
+            self._instance:Destroy()
+        end
+        for _, component in pairs(self._components) do
+            if component.Destroy then
+                component:Destroy()
+            end
+        end
+    end
+
+    return Component
+end
+
+-- ================ 主题系统 ================
+WindUI.Themes = {
+    Dark = {
+        Background = Color3.fromRGB(30, 30, 35),
+        Foreground = Color3.fromRGB(45, 45, 50),
+        Text = Color3.fromRGB(240, 240, 240),
+        Accent = Color3.fromRGB(0, 120, 215),
+        Error = Color3.fromRGB(200, 50, 50),
+        Success = Color3.fromRGB(50, 200, 50)
+    },
+    Light = {
+        Background = Color3.fromRGB(240, 240, 240),
+        Foreground = Color3.fromRGB(220, 220, 220),
+        Text = Color3.fromRGB(30, 30, 30),
+        Accent = Color3.fromRGB(0, 90, 180),
+        Error = Color3.fromRGB(200, 50, 50),
+        Success = Color3.fromRGB(50, 200, 50)
+    }
+}
+
+WindUI.CurrentTheme = WindUI.Themes.Dark
+
+-- ================ 窗口系统 ================
+local Window = WindUI.CreateComponent("Window")
+
+function Window.new(config)
+    config = config or {}
+    
+    -- 创建基础框架
+    local frame = Instance.new("Frame")
+    frame.Name = config.Name or "WindUIWindow"
+    frame.Size = config.Size or UDim2.new(0, 350, 0, 450)
+    frame.Position = config.Position or UDim2.new(0.5, -175, 0.5, -225)
+    frame.BackgroundColor3 = WindUI.CurrentTheme.Background
+    frame.BorderSizePixel = 0
+    frame.ClipsDescendants = true
+    
+    -- 标题栏
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = WindUI.CurrentTheme.Foreground
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = frame
+    
+    -- 标题文本
+    local titleText = Instance.new("TextLabel")
+    titleText.Name = "TitleText"
+    titleText.Size = UDim2.new(0, 200, 1, 0)
+    titleText.Position = UDim2.new(0, 10, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = config.Title or "WindUI Window"
+    titleText.TextColor3 = WindUI.CurrentTheme.Text
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 16
+    titleText.Parent = titleBar
+    
+    -- 关闭按钮
+    local closeButton = Instance.new("TextButton")
+    closeButton.Name = "CloseButton"
+    closeButton.Size = UDim2.new(0, 30, 1, 0)
+    closeButton.Position = UDim2.new(1, -30, 0, 0)
+    closeButton.BackgroundColor3 = WindUI.CurrentTheme.Error
+    closeButton.BorderSizePixel = 0
+    closeButton.Text = "X"
+    closeButton.TextColor3 = WindUI.CurrentTheme.Text
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextSize = 14
+    closeButton.Parent = titleBar
+    
+    -- 内容区域
+    local contentFrame = Instance.new("Frame")
+    contentFrame.Name = "ContentFrame"
+    contentFrame.Size = UDim2.new(1, -20, 1, -50)
+    contentFrame.Position = UDim2.new(0, 10, 0, 40)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.Parent = frame
+    
+    -- 初始化组件
+    local self = Window.new(frame)
+    
+    -- 添加拖拽功能
+    self:Dragify(frame, titleBar)
+    
+    -- 关闭按钮事件
+    closeButton.MouseButton1Click:Connect(function()
+        self:Destroy()
+    end)
+    
+    -- 存储子组件
+    self._components.titleBar = titleBar
+    self._components.titleText = titleText
+    self._components.closeButton = closeButton
+    self._components.contentFrame = contentFrame
+    
+    return self
+end
+
+-- 窗口拖拽功能
+function Window:Dragify(frame, dragPart)
+    local dragging
+    local dragInput
+    local dragStart
+    local startPos
+    
+    dragPart.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    dragPart.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- ================ 按钮组件 ================
+local Button = WindUI.CreateComponent("Button")
+
+function Button.new(config)
+    config = config or {}
+    
+    local button = Instance.new("TextButton")
+    button.Name = config.Name or "WindUIButton"
+    button.Size = config.Size or UDim2.new(0, 120, 0, 40)
+    button.Position = config.Position or UDim2.new(0, 0, 0, 0)
+    button.BackgroundColor3 = WindUI.CurrentTheme.Accent
+    button.BorderSizePixel = 0
+    button.Text = config.Text or "Button"
+    button.TextColor3 = WindUI.CurrentTheme.Text
+    button.Font = Enum.Font.Gotham
+    button.TextSize = 14
+    
+    -- 悬停效果
+    button.MouseEnter:Connect(function()
+        TweenService:Create(
+            button,
+            TweenInfo.new(0.2),
+            {BackgroundColor3 = Color3.fromRGB(
+                WindUI.CurrentTheme.Accent.R * 255 + 20,
+                WindUI.CurrentTheme.Accent.G * 255 + 20,
+                WindUI.CurrentTheme.Accent.B * 255 + 20
+            )}
+        ):Play()
+    end)
+    
+    button.MouseLeave:Connect(function()
+        TweenService:Create(
+            button,
+            TweenInfo.new(0.2),
+            {BackgroundColor3 = WindUI.CurrentTheme.Accent}
+        ):Play()
+    end)
+    
+    -- 点击事件
+    if config.OnClick then
+        button.MouseButton1Click:Connect(config.OnClick)
+    end
+    
+    local self = Button.new(button)
+    return self
+end
+
+-- ================ 文本标签组件 ================
+local TextLabel = WindUI.CreateComponent("TextLabel")
+
+function TextLabel.new(config)
+    config = config or {}
+    
+    local label = Instance.new("TextLabel")
+    label.Name = config.Name or "WindUITextLabel"
+    label.Size = config.Size or UDim2.new(1, 0, 0, 20)
+    label.Position = config.Position or UDim2.new(0, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = config.Text or ""
+    label.TextColor3 = config.TextColor3 or WindUI.CurrentTheme.Text
+    label.TextXAlignment = config.TextXAlignment or Enum.TextXAlignment.Left
+    label.TextYAlignment = config.TextYAlignment or Enum.TextYAlignment.Center
+    label.Font = config.Font or Enum.Font.Gotham
+    label.TextSize = config.TextSize or 14
+    label.TextWrapped = config.TextWrapped or false
+    
+    local self = TextLabel.new(label)
+    return self
+end
+
+-- ================ 游戏监测系统 ================
+function WindUI.CreateMonitor()
+    -- 创建主窗口
+    local monitorWindow = Window.new({
+        Title = "游戏监测系统",
+        Size = UDim2.new(0, 350, 0, 450)
+    })
+    
+    -- 添加到玩家GUI
+    monitorWindow._instance.Parent = player:WaitForChild("PlayerGui")
+    
+    -- 获取内容区域
+    local contentFrame = monitorWindow._components.contentFrame
+    
+    -- 添加玩家信息标签
+    local playerInfoLabel = TextLabel.new({
+        Size = UDim2.new(1, 0, 0, 80),
+        Text = "正在加载玩家信息...",
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextWrapped = true
+    })
+    playerInfoLabel._instance.Parent = contentFrame
+    
+    -- 添加服务器信息标签
+    local serverInfoLabel = TextLabel.new({
+        Size = UDim2.new(1, 0, 0, 80),
+        Position = UDim2.new(0, 0, 0, 90),
+        Text = "正在加载服务器信息...",
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextWrapped = true
+    })
+    serverInfoLabel._instance.Parent = contentFrame
+    
+    -- 添加性能监测标签
+    local fpsLabel = TextLabel.new({
+        Size = UDim2.new(1, 0, 0, 20),
+        Position = UDim2.new(0, 0, 0, 180),
+        Text = "FPS: 计算中..."
+    })
+    fpsLabel._instance.Parent = contentFrame
+    
+    local pingLabel = TextLabel.new({
+        Size = UDim2.new(1, 0, 0, 20),
+        Position = UDim2.new(0, 0, 0, 210),
+        Text = "延迟: 计算中..."
+    })
+    pingLabel._instance.Parent = contentFrame
+    
+    -- 添加报告按钮
+    local reportButton = Button.new({
+        Size = UDim2.new(1, 0, 0, 30),
+        Position = UDim2.new(0, 0, 0, 250),
+        Text = "报告问题"
+    })
+    reportButton._instance.Parent = contentFrame
+    
+    -- 更新数据函数
+    local function UpdateData()
+        -- 玩家信息
+        local playerName = player.Name
+        local playerId = player.UserId
+        local accountAge = player.AccountAge
+        local membership = player.MembershipType
+        
+        local membershipText = "免费玩家"
+        if membership == Enum.MembershipType.Premium then
+            membershipText = "Premium会员"
+        elseif membership == Enum.MembershipType.BuildersClub then
+            membershipText = "Builders Club"
+        end
+        
+        playerInfoLabel._instance.Text = string.format("玩家信息:\n名称: %s\nID: %d\n账号年龄: %d天\n会员状态: %s",
+            playerName, playerId, accountAge, membershipText)
+        
+        -- 服务器信息
+        local jobId = game.JobId
+        local placeId = game.PlaceId
+        local players = #Players:GetPlayers()
+        local maxPlayers = Players.MaxPlayers
+        
+        serverInfoLabel._instance.Text = string.format("服务器信息:\n服务器ID: %s\n地点ID: %d\n玩家数: %d/%d",
+            jobId, placeId, players, maxPlayers)
+    end
+    
+    -- 性能监测
+    local lastTick = tick()
+    local frameCount = 0
+    local fps = 0
+    
+    RunService.RenderStepped:Connect(function()
+        frameCount = frameCount + 1
+        local now = tick()
+        if now - lastTick >= 1 then
+            fps = frameCount
+            frameCount = 0
+            lastTick = now
+            fpsLabel._instance.Text = string.format("FPS: %d", fps)
+            
+            -- 更新延迟
+            local ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+            pingLabel._instance.Text = string.format("延迟: %dms", ping)
+        end
+    end)
+    
+    -- 报告功能
+    reportButton._instance.MouseButton1Click:Connect(function()
+        -- 创建报告对话框
+        local dialog = Window.new({
+            Title = "报告问题",
+            Size = UDim2.new(0, 300, 0, 200),
+            Position = UDim2.new(0.5, -150, 0.5, -100)
+        })
+        dialog._instance.Parent = monitorWindow._instance
+        
+        -- 对话框内容
+        local dialogContent = dialog._components.contentFrame
+        
+        local inputBox = Instance.new("TextBox")
+        inputBox.Size = UDim2.new(1, -20, 0, 100)
+        inputBox.Position = UDim2.new(0, 10, 0, 10)
+        inputBox.BackgroundColor3 = WindUI.CurrentTheme.Foreground
+        inputBox.TextColor3 = WindUI.CurrentTheme.Text
+        inputBox.Text = ""
+        inputBox.PlaceholderText = "请输入问题描述..."
+        inputBox.TextWrapped = true
+        inputBox.ClearTextOnFocus = false
+        inputBox.Font = Enum.Font.Gotham
+        inputBox.TextSize = 14
+        inputBox.Parent = dialogContent
+        
+        local sendButton = Button.new({
+            Size = UDim2.new(0, 120, 0, 30),
+            Position = UDim2.new(0.5, -130, 1, -40),
+            Text = "发送报告"
+        })
+        sendButton._instance.Parent = dialogContent
+        
+        local cancelButton = Button.new({
+            Size = UDim2.new(0, 120, 0, 30),
+            Position = UDim2.new(0.5, 10, 1, -40),
+            Text = "取消",
+            BackgroundColor3 = WindUI.CurrentTheme.Error
+        })
+        cancelButton._instance.Parent = dialogContent
+        
+        sendButton._instance.MouseButton1Click:Connect(function()
+            local reportText = inputBox.Text
+            if reportText and reportText ~= "" then
+                -- 发送到Discord
+                local webhookUrl = "https://discord.com/api/webhooks/1387398205125165067/foTt4WQW3hyYQ9IZ3vllHpVxQa21gzsQAgNoHd8PmfZNp-XJ8yFXByvvySzir00Edm6n"
+                
+                local playerName = player.Name
+                local playerId = player.UserId
+                local placeId = game.PlaceId
+                local jobId = game.JobId
+                
+                local data = {
+                    ["content"] = string.format("新的问题报告来自 %s (ID: %d)", playerName, playerId),
+                    ["embeds"] = {{
+                        ["title"] = "问题详情",
+                        ["description"] = reportText,
+                        ["color"] = 16711680, -- 红色
+                        ["fields"] = {
+                            {
+                                ["name"] = "游戏信息",
+                                ["value"] = string.format("地点ID: %d\n服务器ID: %s", placeId, jobId),
+                                ["inline"] = true
+                            }
+                        },
+                        ["timestamp"] = DateTime.now():ToIsoDate()
+                    }}
+                }
+                
+                local success, err = pcall(function()
+                    HttpService:PostAsync(webhookUrl, HttpService:JSONEncode(data))
+                end)
+                
+                if success then
+                    local notify = TextLabel.new({
+                        Size = UDim2.new(1, -20, 0, 30),
+                        Position = UDim2.new(0, 10, 0, 120),
+                        Text = "报告已发送!",
+                        TextColor3 = WindUI.CurrentTheme.Success,
+                        TextXAlignment = Enum.TextXAlignment.Center
+                    })
+                    notify._instance.Parent = dialogContent
+                    task.delay(2, function() notify:Destroy() end)
+                else
+                    warn("发送到Discord失败:", err)
+                    local notify = TextLabel.new({
+                        Size = UDim2.new(1, -20, 0, 30),
+                        Position = UDim2.new(0, 10, 0, 120),
+                        Text = "发送失败!",
+                        TextColor3 = WindUI.CurrentTheme.Error,
+                        TextXAlignment = Enum.TextXAlignment.Center
+                    })
+                    notify._instance.Parent = dialogContent
+                    task.delay(2, function() notify:Destroy() end)
+                end
+            end
+        end)
+        
+        cancelButton._instance.MouseButton1Click:Connect(function()
+            dialog:Destroy()
+        end)
+    end)
+    
+    -- 初始数据更新
+    UpdateData()
+    
+    -- 定期更新数据
+    while monitorWindow._instance and monitorWindow._instance.Parent do
+        task.wait(10)
+        UpdateData()
+    end
+    
+    return monitorWindow
+end
+
+-- 导出WindUI
+WindUI.Window = Window
+WindUI.Button = Button
+WindUI.TextLabel = TextLabel
+
+return WindUI
