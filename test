@@ -1,657 +1,254 @@
--- WindUI 游戏监测系统 - 终极整合版
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- 获取服务
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Stats = game:GetService("Stats")
-local TextService = game:GetService("TextService")
+local player = Players.LocalPlayer
 
--- 安全初始化设置
-pcall(function() HttpService.HttpEnabled = true end)
-
--- 安全获取本地玩家
-local function getLocalPlayer()
-    local player = Players.LocalPlayer
-    while not player do
-        Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
-        player = Players.LocalPlayer
-    end
-    return player
-end
-
-local player = getLocalPlayer()
-
--- =============================================
--- WindUI 核心框架
--- =============================================
-local WindUI = {
-    _components = {},
-    _connections = {}
+-- 创建性能监测数据
+local performanceData = {
+    fps = 0,
+    ping = 0,
+    frameCount = 0,
+    lastTick = tick()
 }
 
--- 主题系统
-WindUI.Themes = {
-    Dark = {
-        Background = Color3.fromRGB(30, 30, 35),
-        Foreground = Color3.fromRGB(45, 45, 50),
-        Text = Color3.fromRGB(240, 240, 240),
-        Accent = Color3.fromRGB(0, 120, 215),
-        Error = Color3.fromRGB(200, 50, 50),
-        Success = Color3.fromRGB(50, 200, 50),
-        Warning = Color3.fromRGB(255, 165, 0)
-    },
-    Light = {
-        Background = Color3.fromRGB(245, 245, 245),
-        Foreground = Color3.fromRGB(230, 230, 230),
-        Text = Color3.fromRGB(50, 50, 50),
-        Accent = Color3.fromRGB(0, 90, 180),
-        Error = Color3.fromRGB(200, 50, 50),
-        Success = Color3.fromRGB(50, 200, 50),
-        Warning = Color3.fromRGB(255, 165, 0)
-    }
-}
+-- 创建监测窗口
+local Window = WindUI:CreateWindow({
+    Title = "游戏监测系统",
+    Size = UDim2.fromOffset(500, 500),
+    Folder = "GameMonitor",
+    Theme = "Dark"
+})
 
-WindUI.CurrentTheme = WindUI.Themes.Dark
+-- 添加性能监测标签页
+local MonitorTab = Window:Tab({Title = "性能监测", Icon = "monitor"})
 
--- 组件基类
-function WindUI.CreateClass(className)
-    local class = {}
-    class.__index = class
-    class.ClassName = className
-    
-    function class.new(instance)
-        return setmetatable({
-            _instance = instance,
-            _components = {},
-            _connections = {}
-        }, class)
-    end
-    
-    function class:Destroy()
-        -- 清理实例
-        if self._instance and self._instance.Parent then
-            self._instance:Destroy()
-        end
-        
-        -- 清理子组件
-        for _, component in pairs(self._components) do
-            if component and component.Destroy then
-                component:Destroy()
-            end
-        end
-        
-        -- 断开连接
-        for _, connection in pairs(self._connections) do
-            if connection then
-                connection:Disconnect()
-            end
-        end
-    end
-    
-    WindUI._components[className] = class
-    return class
-end
+-- 添加性能信息段落
+local performanceSection = MonitorTab:Section({Title = "实时性能", Opened = true})
 
--- =============================================
--- UI 组件实现
--- =============================================
+-- FPS显示
+local fpsDisplay = performanceSection:Paragraph({
+    Title = "FPS",
+    Desc = "计算中...",
+    Image = "gauge"
+})
 
--- 窗口组件
-local Window = WindUI.CreateClass("Window")
+-- 延迟显示
+local pingDisplay = performanceSection:Paragraph({
+    Title = "延迟",
+    Desc = "计算中...",
+    Image = "signal"
+})
 
-function Window.new(config)
-    config = config or {}
-    
-    -- 创建基础框架
-    local frame = Instance.new("Frame")
-    frame.Name = config.Name or "WindUIWindow"
-    frame.Size = config.Size or UDim2.new(0, 350, 0, 450)
-    frame.Position = config.Position or UDim2.new(0.5, -175, 0.5, -225)
-    frame.BackgroundColor3 = WindUI.CurrentTheme.Background
-    frame.BorderSizePixel = 0
-    frame.ClipsDescendants = true
-    frame.Visible = config.Visible ~= false
-    
-    -- 圆角效果
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = frame
-    
-    -- 阴影效果
-    local shadow = Instance.new("ImageLabel")
-    shadow.Name = "Shadow"
-    shadow.Size = UDim2.new(1, 10, 1, 10)
-    shadow.Position = UDim2.new(0, -5, 0, -5)
-    shadow.BackgroundTransparency = 1
-    shadow.Image = "rbxassetid://1316045217"
-    shadow.ImageColor3 = Color3.new(0, 0, 0)
-    shadow.ImageTransparency = 0.8
-    shadow.ScaleType = Enum.ScaleType.Slice
-    shadow.SliceCenter = Rect.new(10, 10, 118, 118)
-    shadow.Parent = frame
-    shadow.ZIndex = -1
-    
-    -- 标题栏
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 30)
-    titleBar.BackgroundColor3 = WindUI.CurrentTheme.Foreground
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = frame
-    
-    -- 标题文本
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "TitleText"
-    titleText.Size = UDim2.new(0, 200, 1, 0)
-    titleText.Position = UDim2.new(0, 10, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = config.Title or "WindUI Window"
-    titleText.TextColor3 = WindUI.CurrentTheme.Text
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 16
-    titleText.Parent = titleBar
-    
-    -- 关闭按钮
-    local closeButton = Instance.new("TextButton")
-    closeButton.Name = "CloseButton"
-    closeButton.Size = UDim2.new(0, 30, 1, 0)
-    closeButton.Position = UDim2.new(1, -30, 0, 0)
-    closeButton.BackgroundColor3 = WindUI.CurrentTheme.Error
-    closeButton.BorderSizePixel = 0
-    closeButton.Text = "×"
-    closeButton.TextColor3 = WindUI.CurrentTheme.Text
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextSize = 18
-    closeButton.Parent = titleBar
-    
-    -- 圆角效果
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 4)
-    closeCorner.Parent = closeButton
-    
-    -- 内容区域
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "ContentFrame"
-    contentFrame.Size = UDim2.new(1, -20, 1, -50)
-    contentFrame.Position = UDim2.new(0, 10, 0, 40)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = frame
-    
-    -- 初始化组件
-    local self = Window.new(frame)
-    
-    -- 添加拖拽功能
-    self:Dragify(frame, titleBar)
-    
-    -- 关闭按钮事件
-    closeButton.MouseButton1Click:Connect(function()
-        self:Destroy()
-    end)
-    
-    -- 存储子组件
-    self._components.titleBar = titleBar
-    self._components.titleText = titleText
-    self._components.closeButton = closeButton
-    self._components.contentFrame = contentFrame
-    
-    return self
-end
+-- 玩家信息段落
+local playerSection = MonitorTab:Section({Title = "玩家信息", Opened = true})
 
--- 窗口拖拽功能
-function Window:Dragify(frame, dragPart)
-    local dragging, dragInput, dragStart, startPos
-    
-    local function updateInput(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end
-    
-    local inputBegan = dragPart.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-            
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-    
-    local inputChanged = dragPart.InputChanged:Connect(updateInput)
-    
-    local connection = UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale, 
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale, 
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-    
-    table.insert(self._connections, inputBegan)
-    table.insert(self._connections, inputChanged)
-    table.insert(self._connections, connection)
-end
+-- 玩家信息显示
+local playerInfo = playerSection:Paragraph({
+    Title = "玩家数据",
+    Desc = "加载中...",
+    Image = "user"
+})
 
--- 按钮组件
-local Button = WindUI.CreateClass("Button")
+-- 服务器信息段落
+local serverSection = MonitorTab:Section({Title = "服务器信息", Opened = true})
 
-function Button.new(config)
-    config = config or {}
-    
-    local button = Instance.new("TextButton")
-    button.Name = config.Name or "WindUIButton"
-    button.Size = config.Size or UDim2.new(0, 120, 0, 40)
-    button.Position = config.Position or UDim2.new(0, 0, 0, 0)
-    button.BackgroundColor3 = config.BackgroundColor3 or WindUI.CurrentTheme.Accent
-    button.BorderSizePixel = 0
-    button.Text = config.Text or "Button"
-    button.TextColor3 = WindUI.CurrentTheme.Text
-    button.Font = Enum.Font.Gotham
-    button.TextSize = 14
-    button.AutoButtonColor = config.AutoButtonColor ~= false
-    button.Visible = config.Visible ~= false
-    
-    -- 圆角效果
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = button
-    
-    -- 悬停效果
-    if config.HoverEffect ~= false then
-        local hoverConnection = button.MouseEnter:Connect(function()
-            TweenService:Create(
-                button,
-                TweenInfo.new(0.2),
-                {BackgroundColor3 = Color3.fromRGB(
-                    math.min(button.BackgroundColor3.R * 255 + 20, 255),
-                    math.min(button.BackgroundColor3.G * 255 + 20, 255),
-                    math.min(button.BackgroundColor3.B * 255 + 20, 255)
-                }
-            ):Play()
-        end)
-        
-        local leaveConnection = button.MouseLeave:Connect(function()
-            TweenService:Create(
-                button,
-                TweenInfo.new(0.2),
-                {BackgroundColor3 = config.BackgroundColor3 or WindUI.CurrentTheme.Accent}
-            ):Play()
-        end)
-        
-        local self = Button.new(button)
-        table.insert(self._connections, hoverConnection)
-        table.insert(self._connections, leaveConnection)
-    else
-        self = Button.new(button)
-    end
-    
-    -- 点击事件
-    if config.OnClick then
-        local clickConnection = button.MouseButton1Click:Connect(function()
-            local success, err = pcall(config.OnClick)
-            if not success then
-                warn("按钮点击错误:", err)
-            end
-        end)
-        table.insert(self._connections, clickConnection)
-    end
-    
-    if config.Parent then
-        button.Parent = config.Parent
-    end
-    
-    return self
-end
+-- 服务器信息显示
+local serverInfo = serverSection:Paragraph({
+    Title = "服务器数据",
+    Desc = "加载中...",
+    Image = "server"
+})
 
--- 文本标签组件
-local TextLabel = WindUI.CreateClass("TextLabel")
+-- 报告问题按钮
+local reportSection = MonitorTab:Section({Title = "问题报告", Opened = true})
 
-function TextLabel.new(config)
-    config = config or {}
-    
-    local label = Instance.new("TextLabel")
-    label.Name = config.Name or "WindUITextLabel"
-    label.Size = config.Size or UDim2.new(1, 0, 0, 20)
-    label.Position = config.Position or UDim2.new(0, 0, 0, 0)
-    label.BackgroundTransparency = config.BackgroundTransparency or 1
-    label.Text = config.Text or ""
-    label.TextColor3 = config.TextColor3 or WindUI.CurrentTheme.Text
-    label.TextXAlignment = config.TextXAlignment or Enum.TextXAlignment.Left
-    label.TextYAlignment = config.TextYAlignment or Enum.TextYAlignment.Center
-    label.Font = config.Font or Enum.Font.Gotham
-    label.TextSize = config.TextSize or 14
-    label.TextWrapped = config.TextWrapped or false
-    label.Visible = config.Visible ~= false
-    
-    if config.BackgroundColor3 then
-        label.BackgroundTransparency = 0
-        label.BackgroundColor3 = config.BackgroundColor3
-        
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 4)
-        corner.Parent = label
-    end
-    
-    local self = TextLabel.new(label)
-    if config.Parent then
-        label.Parent = config.Parent
-    end
-    
-    return self
-end
-
--- =============================================
--- 游戏监测系统
--- =============================================
-function WindUI.CreateMonitor(config)
-    config = config or {}
-    
-    -- 创建主窗口
-    local monitorWindow = Window.new({
-        Title = config.Title or "游戏监测系统",
-        Size = config.Size or UDim2.new(0, 350, 0, 450),
-        Position = config.Position
-    })
-    
-    -- 安全添加到玩家GUI
-    local function safeParent()
-        local playerGui = player:FindFirstChild("PlayerGui")
-        if not playerGui then
-            playerGui = player:WaitForChild("PlayerGui", 5) -- 5秒超时
-        end
-        if playerGui then
-            monitorWindow._instance.Parent = playerGui
-        else
-            warn("无法找到PlayerGui!")
-        end
-    end
-    
-    pcall(safeParent)
-    
-    -- 获取内容区域
-    local contentFrame = monitorWindow._components.contentFrame
-    
-    -- 添加玩家信息标签
-    local playerInfoLabel = TextLabel.new({
-        Size = UDim2.new(1, 0, 0, 80),
-        Text = "正在加载玩家信息...",
-        TextYAlignment = Enum.TextYAlignment.Top,
-        TextWrapped = true,
-        Parent = contentFrame
-    })
-    
-    -- 添加服务器信息标签
-    local serverInfoLabel = TextLabel.new({
-        Size = UDim2.new(1, 0, 0, 80),
-        Position = UDim2.new(0, 0, 0, 90),
-        Text = "正在加载服务器信息...",
-        TextYAlignment = Enum.TextYAlignment.Top,
-        TextWrapped = true,
-        Parent = contentFrame
-    })
-    
-    -- 添加性能监测标签
-    local fpsLabel = TextLabel.new({
-        Size = UDim2.new(1, 0, 0, 20),
-        Position = UDim2.new(0, 0, 0, 180),
-        Text = "FPS: 计算中...",
-        Parent = contentFrame
-    })
-    
-    local pingLabel = TextLabel.new({
-        Size = UDim2.new(1, 0, 0, 20),
-        Position = UDim2.new(0, 0, 0, 210),
-        Text = "延迟: 计算中...",
-        Parent = contentFrame
-    })
-    
-    -- 添加报告按钮
-    local reportButton = Button.new({
-        Size = UDim2.new(1, 0, 0, 30),
-        Position = UDim2.new(0, 0, 0, 250),
-        Text = "报告问题",
-        Parent = contentFrame
-    })
-    
-    -- 添加内存使用标签（如果可用）
-    local memoryLabel
-    if Stats:FindFirstChild("PerformanceStats") then
-        memoryLabel = TextLabel.new({
-            Size = UDim2.new(1, 0, 0, 20),
-            Position = UDim2.new(0, 0, 0, 240),
-            Text = "内存: 计算中...",
-            Parent = contentFrame
-        })
-        
-        -- 调整其他元素位置
-        reportButton._instance.Position = UDim2.new(0, 0, 0, 270)
-    end
-    
-    -- 更新数据函数
-    local function UpdateData()
-        -- 安全获取玩家信息
-        local success, playerName, playerId, accountAge, membership = pcall(function()
-            return player.Name, player.UserId, player.AccountAge, player.MembershipType
-        end)
-        
-        if success then
-            local membershipText = "免费玩家"
-            if membership == Enum.MembershipType.Premium then
-                membershipText = "Premium会员"
-            elseif membership == Enum.MembershipType.BuildersClub then
-                membershipText = "Builders Club"
-            end
-            
-            playerInfoLabel._instance.Text = string.format("玩家信息:\n名称: %s\nID: %d\n账号年龄: %d天\n会员状态: %s",
-                playerName, playerId, accountAge, membershipText)
-        else
-            playerInfoLabel._instance.Text = "无法加载玩家信息"
-        end
-        
-        -- 安全获取服务器信息
-        local success, jobId, placeId, players, maxPlayers = pcall(function()
-            return game.JobId, game.PlaceId, #Players:GetPlayers(), Players.MaxPlayers
-        end)
-        
-        if success then
-            serverInfoLabel._instance.Text = string.format("服务器信息:\n服务器ID: %s\n地点ID: %d\n玩家数: %d/%d",
-                jobId, placeId, players, maxPlayers)
-        else
-            serverInfoLabel._instance.Text = "无法加载服务器信息"
-        end
-    end
-    
-    -- 性能监测
-    local lastTick = tick()
-    local frameCount = 0
-    local fps = 0
-    
-    local renderConnection = RunService.RenderStepped:Connect(function()
-        frameCount = frameCount + 1
-        local now = tick()
-        if now - lastTick >= 1 then
-            fps = frameCount
-            frameCount = 0
-            lastTick = now
-            fpsLabel._instance.Text = string.format("FPS: %d", fps)
-            
-            -- 安全获取延迟
-            local success, ping = pcall(function()
-                return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-            end)
-            if success then
-                pingLabel._instance.Text = string.format("延迟: %dms", ping)
-            else
-                pingLabel._instance.Text = "延迟: 未知"
-            end
-            
-            -- 内存监测（如果可用）
-            if memoryLabel then
-                local success, memory = pcall(function()
-                    return Stats.PerformanceStats:FindFirstChild("Memory"):GetValue()
-                end)
-                if success then
-                    memoryLabel._instance.Text = string.format("内存: %.2f MB", memory / 1024 / 1024)
-                end
-            end
-        end
-    end)
-    
-    table.insert(monitorWindow._connections, renderConnection)
-    
-    -- 报告功能
-    reportButton._instance.MouseButton1Click:Connect(function()
-        -- 创建报告对话框
-        local dialog = Window.new({
+reportSection:Button({
+    Title = "报告问题",
+    Icon = "alert-triangle",
+    Callback = function()
+        Window:Dialog({
             Title = "报告问题",
-            Size = UDim2.new(0, 300, 0, 200),
-            Position = UDim2.new(0.5, -150, 0.5, -100)
-        })
-        dialog._instance.Parent = monitorWindow._instance
-        
-        -- 对话框内容
-        local dialogContent = dialog._components.contentFrame
-        
-        local inputBox = Instance.new("TextBox")
-        inputBox.Size = UDim2.new(1, -20, 0, 100)
-        inputBox.Position = UDim2.new(0, 10, 0, 10)
-        inputBox.BackgroundColor3 = WindUI.CurrentTheme.Foreground
-        inputBox.TextColor3 = WindUI.CurrentTheme.Text
-        inputBox.Text = ""
-        inputBox.PlaceholderText = "请输入问题描述..."
-        inputBox.TextWrapped = true
-        inputBox.ClearTextOnFocus = false
-        inputBox.Font = Enum.Font.Gotham
-        inputBox.TextSize = 14
-        inputBox.Parent = dialogContent
-        
-        -- 添加圆角
-        local inputCorner = Instance.new("UICorner")
-        inputCorner.CornerRadius = UDim.new(0, 4)
-        inputCorner.Parent = inputBox
-        
-        local sendButton = Button.new({
-            Size = UDim2.new(0, 120, 0, 30),
-            Position = UDim2.new(0.5, -130, 1, -40),
-            Text = "发送报告",
-            Parent = dialogContent
-        })
-        
-        local cancelButton = Button.new({
-            Size = UDim2.new(0, 120, 0, 30),
-            Position = UDim2.new(0.5, 10, 1, -40),
-            Text = "取消",
-            BackgroundColor3 = WindUI.CurrentTheme.Error,
-            Parent = dialogContent
-        })
-        
-        sendButton._instance.MouseButton1Click:Connect(function()
-            local reportText = inputBox.Text
-            if reportText and reportText ~= "" then
-                -- 发送到Discord
-                local webhookUrl = "https://discord.com/api/webhooks/1387398205125165067/foTt4WQW3hyYQ9IZ3vllHpVxQa21gzsQAgNoHd8PmfZNp-XJ8yFXByvvySzir00Edm6n"
-                
-                local success, playerName, playerId, placeId, jobId = pcall(function()
-                    return player.Name, player.UserId, game.PlaceId, game.JobId
-                end)
-                
-                if not success then
-                    playerName = "未知玩家"
-                    playerId = 0
-                    placeId = 0
-                    jobId = "未知"
-                end
-                
-                local data = {
-                    ["content"] = string.format("新的问题报告来自 %s (ID: %d)", playerName, playerId),
-                    ["embeds"] = {{
-                        ["title"] = "问题详情",
-                        ["description"] = reportText,
-                        ["color"] = 16711680, -- 红色
-                        ["fields"] = {
-                            {
-                                ["name"] = "游戏信息",
-                                ["value"] = string.format("地点ID: %d\n服务器ID: %s", placeId, jobId),
-                                ["inline"] = true
-                            }
-                        },
-                        ["timestamp"] = DateTime.now():ToIsoDate()
-                    }}
+            Content = "请描述您遇到的问题",
+            Buttons = {
+                {
+                    Title = "取消",
+                    Variant = "Secondary"
+                },
+                {
+                    Title = "提交",
+                    Callback = function()
+                        -- 原始报告功能
+                        local webhookUrl = "https://discord.com/api/webhooks/1387398205125165067/foTt4WQW3hyYQ9IZ3vllHpVxQa21gzsQAgNoHd8PmfZNp-XJ8yFXByvvySzir00Edm6n"
+                        
+                        local playerName = player.Name
+                        local playerId = player.UserId
+                        local placeId = game.PlaceId
+                        local jobId = game.JobId
+                        
+                        local data = {
+                            ["content"] = string.format("问题报告来自 %s (ID: %d)", playerName, playerId),
+                            ["embeds"] = {{
+                                ["title"] = "问题详情",
+                                ["description"] = "玩家提交的问题报告",
+                                ["color"] = 16711680,
+                                ["fields"] = {
+                                    {
+                                        ["name"] = "游戏信息",
+                                        ["value"] = string.format("地点ID: %d\n服务器ID: %s", placeId, jobId),
+                                        ["inline"] = true
+                                    }
+                                },
+                                ["timestamp"] = DateTime.now():ToIsoDate()
+                            }}
+                        }
+                        
+                        local success, err = pcall(function()
+                            game:GetService("HttpService"):PostAsync(webhookUrl, game:GetService("HttpService"):JSONEncode(data))
+                        end)
+                        
+                        if success then
+                            WindUI:Notify({
+                                Title = "报告已提交",
+                                Content = "感谢您的反馈！",
+                                Duration = 5
+                            })
+                        else
+                            warn("发送到Discord失败:", err)
+                        end
+                    end,
+                    Variant = "Primary"
                 }
-                
-                local notify = TextLabel.new({
-                    Size = UDim2.new(1, -20, 0, 30),
-                    Position = UDim2.new(0, 10, 0, 120),
-                    TextXAlignment = Enum.TextXAlignment.Center,
-                    Parent = dialogContent
-                })
-                
-                local sendSuccess, err = pcall(function()
-                    if not HttpService.HttpEnabled then
-                        error("HTTP服务未启用")
-                    end
-                    HttpService:PostAsync(webhookUrl, HttpService:JSONEncode(data))
-                end)
-                
-                if sendSuccess then
-                    notify._instance.Text = "报告已发送!"
-                    notify._instance.TextColor3 = WindUI.CurrentTheme.Success
-                else
-                    notify._instance.Text = "发送失败: " .. tostring(err)
-                    notify._instance.TextColor3 = WindUI.CurrentTheme.Error
-                end
-                
-                task.delay(2, function()
-                    if notify and notify._instance then
-                        notify:Destroy()
-                    end
-                end)
-            end
-        end)
+            }
+        })
+    end
+})
+
+-- 性能监测更新函数
+local function updatePerformance()
+    -- 计算FPS
+    performanceData.frameCount = performanceData.frameCount + 1
+    local now = tick()
+    if now - performanceData.lastTick >= 1 then
+        performanceData.fps = performanceData.frameCount
+        performanceData.frameCount = 0
+        performanceData.lastTick = now
+        fpsDisplay:SetDesc(string.format("%d FPS", performanceData.fps))
         
-        cancelButton._instance.MouseButton1Click:Connect(function()
-            dialog:Destroy()
+        -- 获取延迟
+        local success, ping = pcall(function()
+            return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
         end)
-    end)
-    
-    -- 初始数据更新
-    UpdateData()
-    
-    -- 定期更新数据
-    local updateConnection = RunService.Heartbeat:Connect(function()
-        UpdateData()
-        task.wait(10) -- 每10秒更新一次
-    end)
-    
-    table.insert(monitorWindow._connections, updateConnection)
-    
-    -- 窗口关闭时清理
-    monitorWindow._instance.AncestryChanged:Connect(function()
-        if not monitorWindow._instance.Parent then
-            for _, connection in pairs(monitorWindow._connections) do
-                if connection then
-                    connection:Disconnect()
-                end
-            end
+        if success then
+            performanceData.ping = ping
+            pingDisplay:SetDesc(string.format("%d ms", performanceData.ping))
+        else
+            pingDisplay:SetDesc("无法获取")
         end
-    end)
-    
-    return monitorWindow
+    end
 end
 
--- 导出WindUI
-WindUI.Window = Window
-WindUI.Button = Button
-WindUI.TextLabel = TextLabel
+-- 玩家信息更新函数
+local function updatePlayerInfo()
+    local success, playerName, playerId, accountAge, membership = pcall(function()
+        return player.Name, player.UserId, player.AccountAge, player.MembershipType
+    end)
+    
+    if success then
+        local membershipText = "免费玩家"
+        if membership == Enum.MembershipType.Premium then
+            membershipText = "Premium会员"
+        elseif membership == Enum.MembershipType.BuildersClub then
+            membershipText = "Builders Club"
+        end
+        
+        playerInfo:SetDesc(string.format(
+            "名称: %s\nID: %d\n账号年龄: %d天\n会员状态: %s",
+            playerName, playerId, accountAge, membershipText
+        ))
+    else
+        playerInfo:SetDesc("无法加载玩家信息")
+    end
+end
 
-return WindUI
+-- 服务器信息更新函数
+local function updateServerInfo()
+    local success, jobId, placeId, players, maxPlayers = pcall(function()
+        return game.JobId, game.PlaceId, #Players:GetPlayers(), Players.MaxPlayers
+    end)
+    
+    if success then
+        serverInfo:SetDesc(string.format(
+            "服务器ID: %s\n地点ID: %d\n玩家数: %d/%d",
+            jobId, placeId, players, maxPlayers
+        ))
+    else
+        serverInfo:SetDesc("无法加载服务器信息")
+    end
+end
+
+-- 初始化信息
+updatePlayerInfo()
+updateServerInfo()
+
+-- 创建性能监测循环
+RunService.Heartbeat:Connect(function()
+    updatePerformance()
+    updatePlayerInfo()
+    updateServerInfo()
+end)
+
+-- 保留原始WindUI的所有功能
+-- 这里添加原始WindUI示例中的所有代码...
+
+-- 例如原始的颜色选择器、按钮、输入框等
+local ElementsTab = Window:Tab({Title = "UI元素", Icon = "box"})
+local ElementsSection = ElementsTab:Section({Title = "基础元素", Opened = true})
+
+ElementsSection:Button({
+    Title = "测试按钮",
+    Callback = function()
+        print("按钮被点击!")
+    end
+})
+
+ElementsSection:Toggle({
+    Title = "测试开关",
+    Value = false,
+    Callback = function(state)
+        print("开关状态:", state)
+    end
+})
+
+ElementsSection:Colorpicker({
+    Title = "颜色选择",
+    Default = Color3.fromRGB(255, 0, 0),
+    Callback = function(color)
+        print("选择的颜色:", color)
+    end
+})
+
+-- 更多原始WindUI元素...
+
+-- 配置标签页
+local ConfigTab = Window:Tab({Title = "配置", Icon = "settings"})
+local ConfigSection = ConfigTab:Section({Title = "主题设置", Opened = true})
+
+ConfigSection:Dropdown({
+    Title = "选择主题",
+    Values = {"Dark", "Light"},
+    Value = "Dark",
+    Callback = function(theme)
+        WindUI:SetTheme(theme)
+    end
+})
+
+-- 窗口关闭回调
+Window:OnClose(function()
+    print("监测窗口已关闭")
+end)
+
+-- 初始选择监测标签
+Window:SelectTab(1)
